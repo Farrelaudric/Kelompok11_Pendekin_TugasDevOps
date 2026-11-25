@@ -20,8 +20,9 @@ until php -r "\$r = new Redis(); \$r->connect(getenv('REDIS_HOST') ?: 'redis', (
     sleep 1
 done
 
-echo "[Pendekin] Menjalankan migrasi database..."
+echo "[Pendekin] Menjalankan migrasi dan seeder database..."
 php artisan migrate --force
+php artisan db:seed --force
 
 php artisan optimize:clear
 if [ "${APP_ENV}" = "production" ]; then
