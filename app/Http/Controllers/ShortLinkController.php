@@ -5,13 +5,11 @@ namespace App\Http\Controllers;
 use App\Http\Requests\StoreShortLinkRequest;
 use App\Models\ShortLink;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\View\View;
 
 class ShortLinkController extends Controller
 {
-    /**
-     * Display the short link creation form, recent result, and links list with click counts.
-     */
     public function index(): View
     {
         $shortLinks = ShortLink::withCount('clicks')
@@ -21,9 +19,6 @@ class ShortLinkController extends Controller
         return view('short-links.index', compact('shortLinks'));
     }
 
-    /**
-     * Store a newly created short link with a custom alias or random 6-character code.
-     */
     public function store(StoreShortLinkRequest $request): RedirectResponse
     {
         $validated = $request->validated();
@@ -51,9 +46,6 @@ class ShortLinkController extends Controller
             ]);
     }
 
-    /**
-     * Deactivate an existing short link.
-     */
     public function deactivate(int $id): RedirectResponse
     {
         $shortLink = ShortLink::findOrFail($id);
@@ -62,22 +54,19 @@ class ShortLinkController extends Controller
             'is_active' => false,
         ]);
 
+        Cache::forget("shortlink:{$shortLink->code}");
+
         return redirect()
             ->route('short-links.index')
             ->with('success', 'Short link berhasil dinonaktifkan.');
     }
 
-    /**
-     * Delete an existing short link and its click statistics.
-     */
     public function destroy(int $id): RedirectResponse
     {
         $shortLink = ShortLink::findOrFail($id);
 
-        // Explicitly remove associated clicks before deleting the link
+        Cache::forget("shortlink:{$shortLink->code}");
         $shortLink->clicks()->delete();
-
-        // Delete the short link record
         $shortLink->delete();
 
         return redirect()
@@ -85,34 +74,33 @@ class ShortLinkController extends Controller
             ->with('success', 'Short link berhasil dihapus.');
     }
 
-    /**
-     * Redirect to the original URL using the short code and record click.
-     */
     public function redirect(string $code): RedirectResponse
     {
-        $shortLink = ShortLink::where('code', $code)->first();
+        $cacheKey = "shortlink:{$code}";
 
-        // 1 & 2. Kode tidak ditemukan
+        $shortLink = Cache::remember($cacheKey, now()->addHour(), function () use ($code) {
+            return ShortLink::where('code', $code)->first();
+        });
+
         if (! $shortLink) {
+            Cache::forget($cacheKey);
             abort(404);
         }
 
-        // 3. Link dinonaktifkan
         if (! $shortLink->is_active) {
+            Cache::forget($cacheKey);
             abort(410, 'Link ini sudah tidak aktif.');
         }
 
-        // 4. Link sudah kedaluwarsa
         if ($shortLink->isExpired()) {
+            Cache::forget($cacheKey);
             abort(410, 'Link ini sudah kedaluwarsa.');
         }
 
-        // 5. Catat satu klik
         $shortLink->clicks()->create([
             'clicked_at' => now(),
         ]);
 
-        // 6. Redirect ke URL asli
         return redirect()->away($shortLink->original_url);
     }
 }

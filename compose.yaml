@@ -1,0 +1,115 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: pendekin-app
+    restart: unless-stopped
+    ports:
+      - "8000:80"
+    environment:
+      APP_NAME: Pendekin
+      APP_ENV: local
+      APP_DEBUG: "true"
+      APP_URL: http://localhost:8000
+      APP_KEY: ${APP_KEY:-base64:3q2+796tvu/er7+/v7+/v7+/v7+/v7+/v7+/v7+/v78=}
+      LOG_CHANNEL: stderr
+      DB_CONNECTION: pgsql
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_DATABASE: ${DB_DATABASE:-pendekin}
+      DB_USERNAME: ${DB_USERNAME:-pendekin}
+      DB_PASSWORD: ${DB_PASSWORD:-pendekin_secret}
+      REDIS_CLIENT: phpredis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      CACHE_STORE: redis
+      SESSION_DRIVER: redis
+      QUEUE_CONNECTION: database
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - frontend_net
+      - backend_internal
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1/up || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  db:
+    image: postgres:16-alpine
+    container_name: pendekin-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_DATABASE:-pendekin}
+      POSTGRES_USER: ${DB_USERNAME:-pendekin}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-pendekin_secret}
+    volumes:
+      - pendekin_pgdata:/var/lib/postgresql/data
+    networks:
+      - backend_internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-pendekin} -d ${DB_DATABASE:-pendekin}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: pendekin-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - pendekin_redisdata:/data
+    # Redis terisolasi penuh: tanpa ports ke host dan hanya di network internal
+    networks:
+      - backend_internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  smoke-test:
+    image: curlimages/curl:8.10.1
+    container_name: pendekin-smoke-test
+    profiles:
+      - smoke
+    depends_on:
+      app:
+        condition: service_healthy
+    networks:
+      - backend_internal
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "=== [SMOKE TEST 1] Health Endpoint App ==="
+        UP_CODE=$$(curl -s -o /dev/null -w "%{http_code}" http://app/up)
+        echo "GET /up -> HTTP $$UP_CODE"
+        [ "$$UP_CODE" = "200" ] || exit 1
+
+        echo "=== [SMOKE TEST 2] Redirect Kode Contoh (Wajib HTTP 302) ==="
+        REDIRECT_CODE=$$(curl -s -o /dev/null -w "%{http_code}" http://app/umkm01)
+        echo "GET /umkm01 -> HTTP $$REDIRECT_CODE"
+        [ "$$REDIRECT_CODE" = "302" ] || exit 1
+
+        echo "=== SMOKE TEST PASSED (302 VERIFIED) ==="
+
+networks:
+  frontend_net:
+    driver: bridge
+  backend_internal:
+    driver: bridge
+    internal: true
+
+volumes:
+  pendekin_pgdata:
+  pendekin_redisdata:
